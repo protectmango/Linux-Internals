@@ -12,4 +12,3 @@
 - Process Syncronization using Semaphore.
 - Thread and Multi-threading.
 - Memory Management.
-# Linux-Internals

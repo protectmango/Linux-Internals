@@ -1,4 +1,4 @@
-i### System V
+## System V
 
 **System V** (pronounced "System Five") is a family of Unix operating systems developed by AT&T, first released in 1983. It was one of the most influential and widely adopted commercial versions of Unix. While it is now considered a historical OS, its concepts and features laid the groundwork for many of today's Unix-like systems, including Linux.
 
@@ -12,7 +12,7 @@ Key aspects of System V include:
     * **Shared Memory**: For processes to share parts of their virtual address space.
     System V IPC objects are identified by integer keys and are system-wide and persistent, meaning they remain in the system's memory even after the creating process terminates.
 
-### POSIX
+## POSIX
 
 **POSIX** (Portable Operating System Interface) is not an operating system, but rather a family of **standards** defined by the IEEE Computer Society. The goal of POSIX is to ensure software portability across different Unix-like operating systems. It was created in the 1980s to combat the "Unix wars," where multiple incompatible versions of Unix were being developed, making it difficult for developers to write portable applications.
 

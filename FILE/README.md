@@ -129,58 +129,169 @@ The universal I/O model is also the basis for standard shell commands. Commands 
   * **`lseek()`**: This system call is used to change the **file offset**, which is the position in the file where the next read or write operation will begin. This allows for random access within a file.
   * **`ioctl()`**: This call provides a catch-all mechanism for performing a wide variety of device-specific I/O operations that are not part of the standard I/O model. For example, it can be used to control a terminal's behavior.
 
+These are excellent follow-up exercises that build on the foundational concepts from Chapter 4. Let's break down the solutions for each one.
 
-### Exercise 4-1: `cp` Program
+### Exercise: `tee` Command Implementation
 
-The goal of this exercise is to write a simplified version of the `cp` command. The program should copy a file specified as its first command-line argument to a new file specified as the second argument. It should use `open()`, `read()`, `write()`, and `close()` system calls.
+This exercise asks you to implement a simplified version of the `tee` command, which copies its standard input to both standard output and a specified file. It should also support an `-a` option to append to the file instead of overwriting it.
 
-#### Solution
+#### Solution: `tee.c`
 
-The program will open the source file for reading and the destination file for writing, creating it if it doesn't exist and truncating it if it does. It will then loop, reading a chunk of data from the source file and writing it to the destination file until the end of the source file is reached.
+The program needs to handle two main scenarios:
 
-**C Code:**
+1.  **Default behavior:** Open the file, overwriting it if it exists.
+2.  **`–a` option:** Open the file in append mode.
+
+The `getopt()` function is a standard way to parse command-line options in C, as suggested by the exercise.
+
+```c
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define BUF_SIZE 1024
+
+int main(int argc, char *argv[]) {
+    int opt;
+    int append = 0;
+    int outputFd;
+    ssize_t numRead;
+    char buf[BUF_SIZE];
+
+    // Parse command-line options
+    while ((opt = getopt(argc, argv, "a")) != -1) {
+        switch (opt) {
+            case 'a':
+                append = 1;
+                break;
+            default: /* '?' */
+                fprintf(stderr, "Usage: %s [-a] <file>\n", argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    if (optind >= argc) {
+        fprintf(stderr, "Expected file argument after options\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Determine open flags based on the 'append' flag
+    int openFlags = O_WRONLY | O_CREAT;
+    if (append) {
+        openFlags |= O_APPEND;
+    } else {
+        openFlags |= O_TRUNC;
+    }
+
+    // Open the file
+    outputFd = open(argv[optind], openFlags, 0644);
+    if (outputFd == -1) {
+        perror("open output file");
+        exit(EXIT_FAILURE);
+    }
+
+    // Read from standard input and write to standard output and the file
+    while ((numRead = read(STDIN_FILENO, buf, BUF_SIZE)) > 0) {
+        // Write to standard output
+        if (write(STDOUT_FILENO, buf, numRead) != numRead) {
+            perror("write to stdout");
+            close(outputFd);
+            exit(EXIT_FAILURE);
+        }
+
+        // Write to the output file
+        if (write(outputFd, buf, numRead) != numRead) {
+            perror("write to file");
+            close(outputFd);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (numRead == -1) {
+        perror("read from stdin");
+        close(outputFd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Close the file
+    if (close(outputFd) == -1) {
+        perror("close output file");
+        exit(EXIT_FAILURE);
+    }
+
+    return 0;
+}
+```
+
+### Exercise: `cp` Program with Holes
+
+This exercise requires a more sophisticated version of the `cp` command that preserves "holes" in a sparse file. A hole is a sequence of null (`\0`) bytes that the file system does not store on disk, saving space. Simply reading and writing the file as a stream of bytes will fill these holes, increasing the file's size.
+
+The solution is to detect sequences of null bytes and, instead of writing them, use `lseek()` to advance the file offset in the destination file, effectively creating a hole.
+
+#### Solution: `cp_sparse.c`
 
 ```c
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define BUF_SIZE 1024
+#define HOLE_THRESHOLD 1 // A simple threshold: if one or more null bytes are found
 
 int main(int argc, char *argv[]) {
     int inputFd, outputFd;
-    ssize_t numRead;
+    ssize_t numRead, numWritten;
     char buf[BUF_SIZE];
+    int nullCount;
 
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <source_file> <dest_file>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    // Open source file for reading
     inputFd = open(argv[1], O_RDONLY);
     if (inputFd == -1) {
         perror("open source file");
         exit(EXIT_FAILURE);
     }
 
-    // Open destination file for writing, creating it if it doesn't exist
-    // and setting permissions to 0644.
     outputFd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (outputFd == -1) {
         perror("open destination file");
-        close(inputFd); // Close the source file before exiting
+        close(inputFd);
         exit(EXIT_FAILURE);
     }
 
-    // Read from the input file and write to the output file
     while ((numRead = read(inputFd, buf, BUF_SIZE)) > 0) {
-        if (write(outputFd, buf, numRead) != numRead) {
-            perror("write");
-            close(inputFd);
-            close(outputFd);
-            exit(EXIT_FAILURE);
+        nullCount = 0;
+        for (int i = 0; i < numRead; i++) {
+            if (buf[i] == '\0') {
+                nullCount++;
+            }
+        }
+
+        if (nullCount >= HOLE_THRESHOLD) {
+            // Found a sequence of null bytes, use lseek to create a hole.
+            if (lseek(outputFd, numRead, SEEK_CUR) == -1) {
+                perror("lseek");
+                close(inputFd);
+                close(outputFd);
+                exit(EXIT_FAILURE);
+            }
+        } else {
+            // Write non-null data
+            numWritten = write(outputFd, buf, numRead);
+            if (numWritten != numRead) {
+                perror("write");
+                close(inputFd);
+                close(outputFd);
+                exit(EXIT_FAILURE);
+            }
         }
     }
 
@@ -191,7 +302,6 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Close both files
     if (close(inputFd) == -1) {
         perror("close input");
         exit(EXIT_FAILURE);
@@ -205,57 +315,3 @@ int main(int argc, char *argv[]) {
 }
 ```
 
------
-
-### Exercise 4-2: File Descriptors and `dup2()`
-
-This exercise involves writing a program that demonstrates how file descriptors are assigned and how they can be manipulated. The program should `open()` a file and print its file descriptor, and then use the `dup2()` system call to duplicate a file descriptor and show how it affects I/O operations.
-
-#### Solution
-
-The program will first open a file and print the assigned file descriptor. It will then use `dup2()` to make file descriptor `1` (standard output) refer to the same open file description as the first file. Subsequent `printf()` calls will then write to the file instead of the terminal.
-
-**C Code:**
-
-```c
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-int main(void) {
-    int fd;
-
-    // Open a file; the first available descriptor will be assigned.
-    // This is typically 3, as 0, 1, and 2 are already in use.
-    fd = open("test_output.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd == -1) {
-        perror("open");
-        exit(EXIT_FAILURE);
-    }
-    
-    // Print the file descriptor of the newly opened file.
-    // This output will go to the terminal (stdout).
-    printf("File opened with descriptor: %d\n", fd);
-
-    // Now, we will duplicate file descriptor 1 (stdout) so that
-    // it points to the same open file description as 'fd'.
-    // All subsequent output to stdout will go to the file.
-    if (dup2(fd, 1) == -1) {
-        perror("dup2");
-        close(fd);
-        exit(EXIT_FAILURE);
-    }
-
-    // This printf() will now write its output to the 'test_output.txt' file
-    // because file descriptor 1 has been redirected.
-    printf("This output is now being redirected to the file.\n");
-
-    // Close the original file descriptor.
-    close(fd);
-
-    return 0;
-}
-```
-
-These solutions illustrate the fundamental concepts of file descriptors, the universal I/O model, and system calls like `open()`, `read()`, `write()`, and `dup2()` as discussed in Chapter 4 of the book.
